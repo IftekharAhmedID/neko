@@ -6,6 +6,21 @@ ARG BASE_IMAGE=ghcr.io/m1k1o/neko/firefox:latest
 # Stage 1: Build the Go server with DRM modifications
 FROM golang:1.21-bookworm AS server-builder
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libx11-dev \
+    libxrandr-dev \
+    libxtst-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libpulse-dev \
+    libxcb-shm0-dev \
+    libxcb-xfixes0-dev \
+    libgtk-3-dev \
+    libxcvt-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 
 # Copy server source
@@ -13,7 +28,7 @@ COPY server/ ./
 
 # Build the server
 RUN go mod download && \
-    go build -o /bin/neko ./cmd/neko
+    CGO_ENABLED=1 go build -o /bin/neko ./cmd/neko
 
 # Stage 2: Final image based on official Neko
 FROM ${BASE_IMAGE}
