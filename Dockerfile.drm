@@ -1,0 +1,34 @@
+# Neko with CastLabs DRM Encryption Support
+# Build: docker build -f Dockerfile.drm -t translucid/neko-drm .
+
+ARG BASE_IMAGE=ghcr.io/m1k1o/neko/firefox:latest
+
+# Stage 1: Build the Go server with DRM modifications
+FROM golang:1.21-bookworm AS server-builder
+
+WORKDIR /src
+
+# Copy server source
+COPY server/ ./
+
+# Build the server
+RUN go mod download && \
+    go build -o /bin/neko ./cmd/neko
+
+# Stage 2: Final image based on official Neko
+FROM ${BASE_IMAGE}
+
+# Copy our DRM-enabled server binary
+COPY --from=server-builder /bin/neko /usr/bin/neko
+
+# Environment variables for DRM (to be set at runtime)
+ENV NEKO_DRM_ENABLED=false
+ENV NEKO_DRM_KEY_ID=""
+ENV NEKO_DRM_KEY=""
+ENV NEKO_DRM_IV=""
+ENV NEKO_DRM_MODE="cbcs"
+
+# Labels
+LABEL org.opencontainers.image.title="Neko with DRM"
+LABEL org.opencontainers.image.description="Neko virtual browser with CastLabs DRM encryption"
+LABEL org.opencontainers.image.source="https://github.com/IftekharAhmedID/neko"

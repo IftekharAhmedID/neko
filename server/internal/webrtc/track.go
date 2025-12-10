@@ -10,6 +10,7 @@ import (
 	"github.com/pion/webrtc/v3/pkg/media"
 	"github.com/rs/zerolog"
 
+	"github.com/m1k1o/neko/server/pkg/drm"
 	"github.com/m1k1o/neko/server/pkg/types"
 	"github.com/m1k1o/neko/server/pkg/types/codec"
 )
@@ -24,6 +25,9 @@ type Track struct {
 	paused   bool
 	stream   types.StreamSinkManager
 	streamMu sync.Mutex
+
+	// DRM encryption support
+	encryptor *drm.Encryptor
 }
 
 type trackOption func(*Track)
@@ -31,6 +35,13 @@ type trackOption func(*Track)
 func WithRtcpChan(rtcp chan []rtcp.Packet) trackOption {
 	return func(t *Track) {
 		t.rtcpCh = rtcp
+	}
+}
+
+// WithEncryptor sets a DRM encryptor for the track
+func WithEncryptor(encryptor *drm.Encryptor) trackOption {
+	return func(t *Track) {
+		t.encryptor = encryptor
 	}
 }
 
@@ -97,8 +108,19 @@ func (t *Track) sampleReader() {
 			return
 		}
 
+		// Apply DRM encryption if configured
+		data := sample.Data
+		if t.encryptor != nil && t.encryptor.Enabled() {
+			encrypted, err := t.encryptor.Encrypt(data)
+			if err != nil {
+				t.logger.Warn().Err(err).Msg("DRM encryption failed, sending unencrypted")
+			} else {
+				data = encrypted
+			}
+		}
+
 		err := t.track.WriteSample(media.Sample{
-			Data:      sample.Data,
+			Data:      data,
 			Duration:  sample.Duration,
 			Timestamp: sample.Timestamp,
 		})

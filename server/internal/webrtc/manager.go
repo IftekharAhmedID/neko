@@ -3,6 +3,7 @@ package webrtc
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"github.com/m1k1o/neko/server/internal/config"
 	"github.com/m1k1o/neko/server/internal/webrtc/cursor"
 	"github.com/m1k1o/neko/server/internal/webrtc/pionlog"
+	"github.com/m1k1o/neko/server/pkg/drm"
 	"github.com/m1k1o/neko/server/pkg/types"
 	"github.com/m1k1o/neko/server/pkg/types/codec"
 	"github.com/m1k1o/neko/server/pkg/types/event"
@@ -75,6 +77,31 @@ func New(desktop types.DesktopManager, capture types.CaptureManager, config *con
 		configuration.ICEServers = ICEServers
 	}
 
+	// Initialize DRM encryptor from environment variables
+	var drmEncryptor *drm.Encryptor
+	if os.Getenv("NEKO_DRM_ENABLED") == "true" {
+		cfg := drm.Config{
+			Enabled: true,
+			KeyID:   os.Getenv("NEKO_DRM_KEY_ID"),
+			Key:     os.Getenv("NEKO_DRM_KEY"),
+			IV:      os.Getenv("NEKO_DRM_IV"),
+			Mode:    os.Getenv("NEKO_DRM_MODE"),
+		}
+		if cfg.Mode == "" {
+			cfg.Mode = "cbcs"
+		}
+		enc, err := drm.NewEncryptor(cfg)
+		if err != nil {
+			logger.Error().Err(err).Msg("failed to initialize DRM encryptor")
+		} else {
+			logger.Info().
+				Str("mode", cfg.Mode).
+				Str("keyId", cfg.KeyID[:8]+"...").
+				Msg("DRM encryption enabled")
+			drmEncryptor = enc
+		}
+	}
+
 	return &WebRTCManagerCtx{
 		logger:  logger,
 		config:  config,
@@ -82,10 +109,11 @@ func New(desktop types.DesktopManager, capture types.CaptureManager, config *con
 
 		webrtcConfiguration: configuration,
 
-		desktop:     desktop,
-		capture:     capture,
-		curImage:    cursor.NewImage(logger, desktop),
-		curPosition: cursor.NewPosition(logger),
+		desktop:      desktop,
+		capture:      capture,
+		curImage:     cursor.NewImage(logger, desktop),
+		curPosition:  cursor.NewPosition(logger),
+		drmEncryptor: drmEncryptor,
 	}
 }
 
@@ -106,6 +134,9 @@ type WebRTCManagerCtx struct {
 	udpMux ice.UDPMux
 
 	camStop, micStop *func()
+
+	// DRM encryption support
+	drmEncryptor *drm.Encryptor
 }
 
 func (manager *WebRTCManagerCtx) Start() {
@@ -322,9 +353,14 @@ func (manager *WebRTCManagerCtx) CreatePeer(session types.Session) (*webrtc.Sess
 		return nil, nil, err
 	}
 
-	// video track
+	// video track with optional DRM encryption
 	videoRtcp := make(chan []rtcp.Packet, 1)
-	videoTrack, err := NewTrack(logger, videoCodec, connection, WithRtcpChan(videoRtcp))
+	videoOpts := []trackOption{WithRtcpChan(videoRtcp)}
+	if manager.drmEncryptor != nil && manager.drmEncryptor.Enabled() {
+		videoOpts = append(videoOpts, WithEncryptor(manager.drmEncryptor))
+		logger.Info().Msg("DRM encryption enabled for video track")
+	}
+	videoTrack, err := NewTrack(logger, videoCodec, connection, videoOpts...)
 	if err != nil {
 		return nil, nil, err
 	}
