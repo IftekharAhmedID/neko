@@ -10,6 +10,46 @@ import (
 	"github.com/m1k1o/neko/server/pkg/types/codec"
 )
 
+// isDrmEnabled checks if DRM encryption is enabled via environment variable
+func isDrmEnabled() bool {
+	return os.Getenv("NEKO_DRM_ENABLED") == "true"
+}
+
+// addDrmEncryptor adds the CastLabs cencryptor element to pipeline if DRM is enabled
+// The cencryptor element must come after h264parse with byte-stream format
+func addDrmEncryptor(pipeline string) string {
+	if !isDrmEnabled() {
+		return pipeline
+	}
+
+	// Get DRM configuration from environment
+	key := os.Getenv("NEKO_DRM_KEY")
+	if key == "" {
+		key = "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c" // CastLabs default test key
+	}
+	keyId := os.Getenv("NEKO_DRM_KEY_ID")
+	if keyId == "" {
+		keyId = "00000000000000000000000000000001" // CastLabs default test key ID
+	}
+	iv := os.Getenv("NEKO_DRM_IV")
+	if iv == "" {
+		iv = "d5fbd6b82ed93e4ef98ae40931ee33b7" // CastLabs default test IV
+	}
+	mode := os.Getenv("NEKO_DRM_MODE")
+	if mode == "" {
+		mode = "cbc" // Default to AES-CBC full sample (matches Dockerfile.drm)
+	}
+
+	// Build cencryptor element with explicit properties including kid
+	// mode=cbc enables AES-CBC encryption (CBCS mode)
+	// kid is required for the client SDK to identify the correct decryption key
+	cencryptorElement := fmt.Sprintf("cencryptor mode=%s key=%s kid=%s iv=%s", mode, key, keyId, iv)
+
+	// Insert cencryptor before appsink
+	// The h264parse element ensures proper NAL unit boundaries for encryption
+	return strings.Replace(pipeline, " ! appsink", " ! h264parse config-interval=-1 ! "+cencryptorElement+" ! appsink", 1)
+}
+
 /*
 	apt-get install \
 		libgstreamer1.0-0 \
@@ -182,6 +222,11 @@ func NewVideoPipeline(rtpCodec codec.RTPCodec, display string, pipelineSrc strin
 		}
 	default:
 		return "", fmt.Errorf("unknown codec %s", rtpCodec.Name)
+	}
+
+	// Add DRM encryption if enabled (only for H.264 codec)
+	if rtpCodec.Name == codec.H264().Name {
+		pipelineStr = addDrmEncryptor(pipelineStr)
 	}
 
 	return pipelineStr, nil

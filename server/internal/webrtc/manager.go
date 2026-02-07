@@ -77,29 +77,12 @@ func New(desktop types.DesktopManager, capture types.CaptureManager, config *con
 		configuration.ICEServers = ICEServers
 	}
 
-	// Initialize DRM encryptor from environment variables
-	var drmEncryptor *drm.Encryptor
+	// DRM encryption is now handled at the GStreamer pipeline level using CastLabs cencryptor plugin.
+	// The old Go-based encryptor is disabled. When NEKO_DRM_ENABLED=true, the GStreamer pipeline
+	// automatically adds the cencryptor element (see capture_pipeline.go).
+	var drmEncryptor *drm.Encryptor = nil
 	if os.Getenv("NEKO_DRM_ENABLED") == "true" {
-		cfg := drm.Config{
-			Enabled: true,
-			KeyID:   os.Getenv("NEKO_DRM_KEY_ID"),
-			Key:     os.Getenv("NEKO_DRM_KEY"),
-			IV:      os.Getenv("NEKO_DRM_IV"),
-			Mode:    os.Getenv("NEKO_DRM_MODE"),
-		}
-		if cfg.Mode == "" {
-			cfg.Mode = "cbcs"
-		}
-		enc, err := drm.NewEncryptor(cfg)
-		if err != nil {
-			logger.Error().Err(err).Msg("failed to initialize DRM encryptor")
-		} else {
-			logger.Info().
-				Str("mode", cfg.Mode).
-				Str("keyId", cfg.KeyID[:8]+"...").
-				Msg("DRM encryption enabled")
-			drmEncryptor = enc
-		}
+		logger.Info().Msg("DRM encryption enabled via GStreamer cencryptor plugin")
 	}
 
 	return &WebRTCManagerCtx{
