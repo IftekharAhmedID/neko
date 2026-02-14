@@ -148,28 +148,30 @@ func New(desktop types.DesktopManager, config *config.Capture) *CaptureManagerCt
 				fmt.Sprintf("! application/x-rtp, payload=%d, encoding-name=VP8-DRAFT-IETF-01 ", codec.VP8().PayloadType) +
 				"! rtpvp8depay " +
 				"! decodebin " +
-				"! queue max-size-buffers=1 leaky=downstream " +
 				"! videoconvert " +
+				"! videorate " +
 				"! videoscale " +
 				fmt.Sprintf("! video/x-raw,width=%d,height=%d ", config.WebcamWidth, config.WebcamHeight) +
 				"! identity drop-allocation=true " +
 				fmt.Sprintf("! v4l2sink sync=false device=%s", config.WebcamDevice),
+			// TODO: Test this pipeline.
 			codec.VP9().Name: "appsrc format=time is-live=true do-timestamp=true name=appsrc " +
 				"! application/x-rtp " +
 				"! rtpvp9depay " +
 				"! decodebin " +
-				"! queue max-size-buffers=1 leaky=downstream " +
 				"! videoconvert " +
+				"! videorate " +
 				"! videoscale " +
 				fmt.Sprintf("! video/x-raw,width=%d,height=%d ", config.WebcamWidth, config.WebcamHeight) +
 				"! identity drop-allocation=true " +
 				fmt.Sprintf("! v4l2sink sync=false device=%s", config.WebcamDevice),
+			// TODO: Test this pipeline.
 			codec.H264().Name: "appsrc format=time is-live=true do-timestamp=true name=appsrc " +
 				"! application/x-rtp " +
 				"! rtph264depay " +
 				"! decodebin " +
-				"! queue max-size-buffers=1 leaky=downstream " +
 				"! videoconvert " +
+				"! videorate " +
 				"! videoscale " +
 				fmt.Sprintf("! video/x-raw,width=%d,height=%d ", config.WebcamWidth, config.WebcamHeight) +
 				"! identity drop-allocation=true " +
@@ -180,18 +182,13 @@ func New(desktop types.DesktopManager, config *config.Capture) *CaptureManagerCt
 				fmt.Sprintf("! application/x-rtp, payload=%d, encoding-name=OPUS ", codec.Opus().PayloadType) +
 				"! rtpopusdepay " +
 				"! decodebin " +
-				"! queue max-size-buffers=0 leaky=downstream " +
-				"! audioconvert " +
-				"! audioresample " +
-				fmt.Sprintf("! pulsesink device=%s buffer-time=10000 latency-time=5000", config.MicrophoneDevice),
+				fmt.Sprintf("! pulsesink device=%s", config.MicrophoneDevice),
+			// TODO: Test this pipeline.
 			codec.G722().Name: "appsrc format=time is-live=true do-timestamp=true name=appsrc " +
 				"! application/x-rtp clock-rate=8000 " +
 				"! rtpg722depay " +
 				"! decodebin " +
-				"! queue max-size-buffers=0 leaky=downstream " +
-				"! audioconvert " +
-				"! audioresample " +
-				fmt.Sprintf("! pulsesink device=%s buffer-time=10000 latency-time=5000", config.MicrophoneDevice),
+				fmt.Sprintf("! pulsesink device=%s", config.MicrophoneDevice),
 		}, "microphone"),
 	}
 }

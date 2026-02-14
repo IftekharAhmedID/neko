@@ -1,14 +1,17 @@
-# Neko Chromium with CastLabs DRM Encryption Support
-# Build: docker build -f Dockerfile.drm -t translucid/neko-drm-chromium .
+# Neko Chromium with CastLabs DRM Encryption + Webcam/Mic Support
+# Build: docker build -f Dockerfile.drm.chromium -t translucid/neko-drm-chromium .
 #
-# Features:
-# - Chromium browser with DRM encryption (cencryptor plugin)
-# - Webcam/Microphone passthrough support
-# - v4l2loopback compatible for virtual webcam
+# Key Features:
+# - Chromium browser with webcam/mic permissions auto-granted
+# - CastLabs cencryptor GStreamer plugin for DRM encryption
+# - v4l2loopback support for virtual webcam from client
+# - PulseAudio support for microphone from client
 #
-# Runtime Requirements:
-# - Host: modprobe v4l2loopback video_nr=0 exclusive_caps=1
-# - Docker: --device /dev/video0:/dev/video0 --cap-add=SYS_ADMIN --shm-size=2g
+# Required Runtime Config:
+# - NEKO_DRM_ENABLED=true
+# - NEKO_DRM_KEY, NEKO_DRM_KEY_ID, NEKO_DRM_IV, NEKO_DRM_MODE=cbc
+# - NEKO_CAPTURE_WEBCAM_ENABLED=true
+# - NEKO_CAPTURE_MICROPHONE_ENABLED=true
 
 ARG BASE_IMAGE=ghcr.io/m1k1o/neko/chromium:latest
 ARG TARGETPLATFORM
@@ -59,15 +62,14 @@ ENV CGO_CFLAGS="-I/usr/local/include"
 RUN go mod download && \
     CGO_ENABLED=1 go build -o /bin/neko ./cmd/neko
 
-# Stage 2: Final image based on official Neko
+# Stage 2: Final image based on official Neko Chromium
 FROM ${BASE_IMAGE}
 
 # Copy our DRM-enabled server binary
 COPY --from=server-builder /bin/neko /usr/bin/neko
 
-# Install OpenSSL 3, newer libstdc++, and GStreamer 1.22 from Debian Bookworm
-# The CastLabs GStreamer plugin was built for GStreamer 1.20 on Ubuntu 22.04
-# GStreamer 1.22 is backward compatible with 1.20 plugins
+# Install OpenSSL 3, newer libstdc++, GStreamer 1.22, and v4l2loopback utils
+# The CastLabs GStreamer plugin requires OpenSSL 3 and GStreamer 1.20+
 RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -81,7 +83,8 @@ RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.lis
         gstreamer1.0-plugins-ugly \
         gstreamer1.0-x \
         gstreamer1.0-pulseaudio \
-        v4l-utils && \
+        v4l-utils \
+        && \
     rm /etc/apt/sources.list.d/bookworm.list && \
     apt-get update && \
     ldconfig
@@ -91,51 +94,41 @@ RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.lis
 COPY castlabs-sdk/libgstcencryptor.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 
 # Ensure plugin dependencies are linked and clear any cached GStreamer registry
-# The registry cache may have been created before OpenSSL 3 was installed
 RUN ldconfig && \
-    rm -rf /root/.cache/gstreamer-1.0 /home/*/.cache/gstreamer-1.0 /var/cache/gstreamer* 2>/dev/null || true && \
-    # Create a startup hook to clear stale registry cache
-    echo '#!/bin/bash\nrm -rf /home/neko/.cache/gstreamer-1.0 2>/dev/null' > /etc/neko/startup.d/00-clear-gst-cache.sh && \
-    chmod +x /etc/neko/startup.d/00-clear-gst-cache.sh 2>/dev/null || true
+    rm -rf /root/.cache/gstreamer-1.0 /home/*/.cache/gstreamer-1.0 /var/cache/gstreamer* 2>/dev/null || true
+
+# Configure Chromium to auto-grant webcam/mic permissions
+# This allows the browser inside the VM to access the virtual webcam/mic without prompts
+COPY --chown=neko chromium-webcam-preferences.json /home/neko/.config/chromium/Default/Preferences
 
 # ============================================================================
 # Translucid VM Activity Extension
 # Tracks user activity inside the VM browser for session monitoring
+# Chromium loads via --load-extension=/opt/translucid/extension (set at runtime)
 # ============================================================================
-
-# Copy extension files for Chromium (loaded via --load-extension at runtime)
 COPY translucid-extension/manifest.json /opt/translucid/extension/manifest.json
 COPY translucid-extension/background.js /opt/translucid/extension/background.js
 COPY translucid-extension/content.js /opt/translucid/extension/content.js
 COPY translucid-extension/icons/ /opt/translucid/extension/icons/
-
-# For Firefox: create .xpi package and install as system extension
-# Firefox loads extensions from distribution/extensions/ automatically
-# The filename must match the extension ID from manifest.v2.json
-COPY translucid-extension/manifest.v2.json /tmp/ext-build/manifest.json
-COPY translucid-extension/background.js /tmp/ext-build/background.js
-COPY translucid-extension/content.js /tmp/ext-build/content.js
-COPY translucid-extension/icons/ /tmp/ext-build/icons/
-RUN apt-get update && apt-get install -y --no-install-recommends zip && \
-    cd /tmp/ext-build && zip -r /tmp/vm-activity.xpi . && \
-    mkdir -p /usr/lib/firefox/distribution/extensions && \
-    cp /tmp/vm-activity.xpi '/usr/lib/firefox/distribution/extensions/vm-activity@translucid.cloud.xpi' && \
-    rm -rf /tmp/ext-build /tmp/vm-activity.xpi && \
-    apt-get purge -y zip && apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
-
-# Ensure extension directory is accessible
 RUN chown -R neko:neko /opt/translucid
 
 # Environment variables for DRM (to be set at runtime)
-# When NEKO_DRM_ENABLED=true, the cencryptor GStreamer element is added to pipeline
 ENV NEKO_DRM_ENABLED=false
 ENV NEKO_DRM_KEY_ID=""
 ENV NEKO_DRM_KEY=""
 ENV NEKO_DRM_IV=""
 ENV NEKO_DRM_MODE="cbc"
 
+# Environment variables for Webcam/Mic capture from client
+# These enable the server to receive webcam/mic streams from browser clients
+ENV NEKO_CAPTURE_WEBCAM_ENABLED=false
+ENV NEKO_CAPTURE_WEBCAM_DEVICE="/dev/video0"
+ENV NEKO_CAPTURE_WEBCAM_WIDTH=1280
+ENV NEKO_CAPTURE_WEBCAM_HEIGHT=720
+ENV NEKO_CAPTURE_MICROPHONE_ENABLED=false
+ENV NEKO_CAPTURE_MICROPHONE_DEVICE="audio_input"
+
 # Labels
-LABEL org.opencontainers.image.title="Neko with DRM"
-LABEL org.opencontainers.image.description="Neko virtual browser with CastLabs DRM encryption and VM activity tracking"
+LABEL org.opencontainers.image.title="Neko Chromium with DRM"
+LABEL org.opencontainers.image.description="Neko Chromium browser with CastLabs DRM encryption, webcam/mic support, and VM activity tracking"
 LABEL org.opencontainers.image.source="https://github.com/IftekharAhmedID/neko"

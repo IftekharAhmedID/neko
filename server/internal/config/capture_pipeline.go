@@ -40,10 +40,9 @@ func addDrmEncryptor(pipeline string) string {
 		mode = "cbc" // Default to AES-CBC full sample (matches Dockerfile.drm)
 	}
 
-	// Build cencryptor element with explicit properties including kid
-	// mode=cbc enables AES-CBC encryption (CBCS mode)
-	// kid is required for the client SDK to identify the correct decryption key
-	cencryptorElement := fmt.Sprintf("cencryptor mode=%s key=%s kid=%s iv=%s", mode, key, keyId, iv)
+	// Build cencryptor element — only supports: mode, key, iv
+	// The key ID (kid) is NOT a cencryptor property; it's used client-side only
+	cencryptorElement := fmt.Sprintf("cencryptor mode=%s key=%s iv=%s", mode, key, iv)
 
 	// Insert cencryptor before appsink
 	// The h264parse element ensures proper NAL unit boundaries for encryption

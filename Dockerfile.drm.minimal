@@ -1,0 +1,124 @@
+# Minimal Neko Chromium with DRM - uses pre-built server from Firefox DRM image
+# This avoids the golang build stage to save disk space
+#
+# Build: docker build -f Dockerfile.drm.minimal -t translucid/neko-drm-chromium .
+
+# Extract pre-built DRM server from existing Firefox DRM image
+FROM 289259596817.dkr.ecr.us-east-2.amazonaws.com/translucid-neko-drm:latest AS drm-source
+
+# Final image based on official Chromium
+FROM ghcr.io/m1k1o/neko/chromium:latest
+
+# Copy DRM-enabled neko server binary from Firefox DRM image
+COPY --from=drm-source /usr/bin/neko /usr/bin/neko
+
+# Copy CastLabs GStreamer encryption plugin
+COPY --from=drm-source /usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstcencryptor.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+
+# Install OpenSSL 3 and updated GStreamer (required by cencryptor plugin)
+# CRITICAL: gstreamer1.0-plugins-good provides libgstv4l2.so (v4l2sink) for webcam
+RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libssl3 \
+        libstdc++6 \
+        libgstreamer1.0-0 \
+        libgstreamer-plugins-base1.0-0 \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly \
+        gstreamer1.0-x \
+        gstreamer1.0-pulseaudio \
+        gstreamer1.0-tools \
+        v4l-utils && \
+    rm /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update && \
+    ldconfig && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Verify v4l2sink plugin is available (fails build if missing)
+RUN gst-inspect-1.0 v4l2sink || (echo "ERROR: v4l2sink not found - checking available plugins..." && ls -la /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ | grep v4l && exit 1)
+
+# ============================================================================
+# WEBCAM FIX: LD_PRELOAD hack for v4l2loopback + GStreamer v4l2sink
+# ============================================================================
+# Problem: GStreamer v4l2sink checks for V4L2_CAP_VIDEO_OUTPUT capability,
+# but v4l2loopback only advertises V4L2_CAP_VIDEO_CAPTURE. This causes
+# "pipeline doesn't want to preroll" error.
+#
+# Solution: LD_PRELOAD library intercepts ioctl() and adds VIDEO_OUTPUT
+# capability to v4l2loopback devices when VIDIOC_QUERYCAP is called.
+# ============================================================================
+
+# Install gcc and libc-dev for building the hack
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create the v4l2 capability hack source
+RUN cat > /tmp/v4l2_cap_hack.c << 'EOF'
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdarg.h>
+#include <sys/ioctl.h>
+#include <linux/videodev2.h>
+#include <string.h>
+
+static int (*real_ioctl)(int fd, unsigned long request, ...) = NULL;
+
+int ioctl(int fd, unsigned long request, ...) {
+    va_list args;
+    void *arg;
+    int ret;
+
+    if (!real_ioctl) real_ioctl = dlsym(RTLD_NEXT, "ioctl");
+
+    va_start(args, request);
+    arg = va_arg(args, void *);
+    va_end(args);
+
+    ret = real_ioctl(fd, request, arg);
+
+    if (ret == 0 && request == VIDIOC_QUERYCAP) {
+        struct v4l2_capability *cap = (struct v4l2_capability *)arg;
+        if (strstr((char *)cap->card, "Loopback") ||
+            strstr((char *)cap->card, "NekoCam") ||
+            strstr((char *)cap->card, "loopback")) {
+            cap->capabilities |= V4L2_CAP_VIDEO_OUTPUT;
+            cap->device_caps |= V4L2_CAP_VIDEO_OUTPUT;
+        }
+    }
+    return ret;
+}
+EOF
+
+# Compile the hack
+RUN gcc -shared -fPIC -o /usr/lib/libv4l2_cap_hack.so /tmp/v4l2_cap_hack.c -ldl && \
+    rm /tmp/v4l2_cap_hack.c && \
+    chmod 755 /usr/lib/libv4l2_cap_hack.so
+
+# Clear GStreamer cache
+RUN rm -rf /root/.cache/gstreamer-1.0 /home/*/.cache/gstreamer-1.0 2>/dev/null || true
+
+# ============================================================================
+# Translucid VM Activity Extension
+# Tracks user activity inside the VM browser for session monitoring
+# Chromium loads via --load-extension=/opt/translucid/extension (set at runtime)
+# ============================================================================
+COPY translucid-extension/manifest.json /opt/translucid/extension/manifest.json
+COPY translucid-extension/background.js /opt/translucid/extension/background.js
+COPY translucid-extension/content.js /opt/translucid/extension/content.js
+COPY translucid-extension/icons/ /opt/translucid/extension/icons/
+RUN chown -R neko:neko /opt/translucid
+
+# Environment defaults
+ENV NEKO_DRM_ENABLED=false
+# WEBCAM FIX: Enable LD_PRELOAD for v4l2sink compatibility with v4l2loopback
+ENV LD_PRELOAD=/usr/lib/libv4l2_cap_hack.so
+ENV NEKO_DRM_KEY_ID=""
+ENV NEKO_DRM_KEY=""
+ENV NEKO_DRM_IV=""
+ENV NEKO_DRM_MODE="cbc"
+
+LABEL org.opencontainers.image.title="Neko Chromium with DRM"
+LABEL org.opencontainers.image.description="Neko Chromium with CastLabs DRM encryption and VM activity tracking"
