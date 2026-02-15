@@ -1,0 +1,149 @@
+# Neko Firefox with CastLabs DRM Encryption + Webcam/Mic Support
+# Build: docker build -f Dockerfile.drm.firefox -t translucid/neko-drm-firefox .
+#
+# Key Features:
+# - Firefox browser with webcam/mic permissions auto-granted via policy
+# - CastLabs cencryptor GStreamer plugin for DRM encryption
+# - v4l2loopback support for virtual webcam from client
+# - PulseAudio support for microphone from client
+# - VM Activity Tracker extension pre-installed as .xpi
+#
+# Required Runtime Config:
+# - NEKO_DRM_ENABLED=true
+# - NEKO_DRM_KEY, NEKO_DRM_KEY_ID, NEKO_DRM_IV, NEKO_DRM_MODE=cbc
+# - NEKO_CAPTURE_WEBCAM_ENABLED=true
+# - NEKO_CAPTURE_MICROPHONE_ENABLED=true
+
+ARG BASE_IMAGE=ghcr.io/m1k1o/neko/firefox:latest
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Stage 1: Build the Go server with DRM modifications
+# Use Bullseye to match base image GLIBC 2.31
+FROM golang:1.21-bullseye AS server-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libx11-dev \
+    libxrandr-dev \
+    libxtst-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libpulse-dev \
+    libxcb-shm0-dev \
+    libxcb-xfixes0-dev \
+    libgtk-3-dev \
+    pkg-config \
+    git \
+    meson \
+    ninja-build \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install newer meson via pip and build libxcvt from source
+RUN pip3 install --upgrade meson && \
+    git clone https://gitlab.freedesktop.org/xorg/lib/libxcvt.git /tmp/libxcvt && \
+    cd /tmp/libxcvt && \
+    /usr/local/bin/meson setup build && \
+    ninja -C build && \
+    ninja -C build install && \
+    ldconfig && \
+    rm -rf /tmp/libxcvt
+
+WORKDIR /src
+
+# Copy server source
+COPY server/ ./
+
+# Build the server with libxcvt from /usr/local
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV CGO_LDFLAGS="-L/usr/local/lib"
+ENV CGO_CFLAGS="-I/usr/local/include"
+RUN go mod download && \
+    CGO_ENABLED=1 go build -o /bin/neko ./cmd/neko
+
+# Stage 2: Final image based on official Neko Firefox
+FROM ${BASE_IMAGE}
+
+# Copy our DRM-enabled server binary
+COPY --from=server-builder /bin/neko /usr/bin/neko
+
+# Install OpenSSL 3, newer libstdc++, GStreamer 1.22, and v4l2loopback utils
+# The CastLabs GStreamer plugin requires OpenSSL 3 and GStreamer 1.20+
+RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libssl3 \
+        libstdc++6 \
+        libgstreamer1.0-0 \
+        libgstreamer-plugins-base1.0-0 \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly \
+        gstreamer1.0-x \
+        gstreamer1.0-pulseaudio \
+        v4l-utils \
+        && \
+    rm /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update && \
+    ldconfig
+
+# Copy CastLabs GStreamer encryption plugin
+# This plugin encrypts H.264 video using CastLabs CENC SDK
+COPY castlabs-sdk/libgstcencryptor.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+
+# Ensure plugin dependencies are linked and clear any cached GStreamer registry
+RUN ldconfig && \
+    rm -rf /root/.cache/gstreamer-1.0 /home/*/.cache/gstreamer-1.0 /var/cache/gstreamer* 2>/dev/null || true
+
+# ============================================================================
+# Translucid VM Activity Extension
+# Firefox loads extensions from distribution/extensions/ as .xpi packages
+# The .xpi filename must match the extension ID from manifest.v2.json
+# ============================================================================
+
+# Build .xpi from Manifest V2 source and install as system extension
+COPY translucid-extension/manifest.v2.json /tmp/ext-build/manifest.json
+COPY translucid-extension/background.js /tmp/ext-build/background.js
+COPY translucid-extension/content.js /tmp/ext-build/content.js
+COPY translucid-extension/icons/ /tmp/ext-build/icons/
+RUN apt-get update && apt-get install -y --no-install-recommends zip && \
+    cd /tmp/ext-build && zip -r /tmp/vm-activity.xpi . && \
+    mkdir -p /usr/lib/firefox/distribution/extensions && \
+    cp /tmp/vm-activity.xpi '/usr/lib/firefox/distribution/extensions/vm-activity@translucid.cloud.xpi' && \
+    rm -rf /tmp/ext-build /tmp/vm-activity.xpi && \
+    apt-get purge -y zip && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Also copy Chromium-format extension files (used by runtime mount + config server)
+COPY translucid-extension/manifest.json /opt/translucid/extension/manifest.json
+COPY translucid-extension/background.js /opt/translucid/extension/background.js
+COPY translucid-extension/content.js /opt/translucid/extension/content.js
+COPY translucid-extension/icons/ /opt/translucid/extension/icons/
+
+# Ensure extension directory is accessible
+RUN chown -R neko:neko /opt/translucid
+
+# Environment variables for DRM (to be set at runtime)
+# When NEKO_DRM_ENABLED=true, the cencryptor GStreamer element is added to pipeline
+ENV NEKO_DRM_ENABLED=false
+ENV NEKO_DRM_KEY_ID=""
+ENV NEKO_DRM_KEY=""
+ENV NEKO_DRM_IV=""
+ENV NEKO_DRM_MODE="cbc"
+
+# Environment variables for Webcam/Mic capture from client
+# These enable the server to receive webcam/mic streams from browser clients
+ENV NEKO_CAPTURE_WEBCAM_ENABLED=false
+ENV NEKO_CAPTURE_WEBCAM_DEVICE="/dev/video0"
+ENV NEKO_CAPTURE_WEBCAM_WIDTH=1280
+ENV NEKO_CAPTURE_WEBCAM_HEIGHT=720
+ENV NEKO_CAPTURE_MICROPHONE_ENABLED=false
+ENV NEKO_CAPTURE_MICROPHONE_DEVICE="audio_input"
+
+# Labels
+LABEL org.opencontainers.image.title="Neko Firefox with DRM"
+LABEL org.opencontainers.image.description="Neko Firefox browser with CastLabs DRM encryption, webcam/mic support, and VM activity tracking"
+LABEL org.opencontainers.image.source="https://github.com/IftekharAhmedID/neko"
