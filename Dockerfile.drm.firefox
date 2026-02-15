@@ -66,6 +66,39 @@ RUN go mod download && \
 # Stage 2: Final image based on official Neko Firefox
 FROM ${BASE_IMAGE}
 
+# ============================================================================
+# Replace Firefox Release with Firefox ESR
+# Regular Firefox enforces xpinstall.signatures.required=true at compile time,
+# which prevents loading unsigned extensions. Firefox ESR allows disabling
+# signature verification via policy, enabling our unsigned watcher extension.
+# ============================================================================
+RUN set -eux; \
+    # Save neko config files from base image's release Firefox
+    mkdir -p /tmp/ff-cfg/defaults/pref /tmp/ff-cfg/distribution; \
+    cp /usr/lib/firefox/mozilla.cfg /tmp/ff-cfg/ 2>/dev/null || true; \
+    cp /usr/lib/firefox/defaults/pref/autoconfig.js /tmp/ff-cfg/defaults/pref/ 2>/dev/null || true; \
+    cp /usr/lib/firefox/distribution/policies.json /tmp/ff-cfg/distribution/ 2>/dev/null || true; \
+    # Remove release Firefox (installed from tarball in base image, not apt)
+    rm -rf /usr/lib/firefox /usr/bin/firefox; \
+    # Install Firefox ESR from Bookworm (ESR 115+)
+    echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm-esr.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends firefox-esr; \
+    rm /etc/apt/sources.list.d/bookworm-esr.list; \
+    # Create symlinks so all /usr/lib/firefox/ paths still work
+    ln -sf /usr/lib/firefox-esr /usr/lib/firefox; \
+    ln -sf /usr/bin/firefox-esr /usr/bin/firefox; \
+    # Restore neko config files (goes to ESR dir via symlink)
+    mkdir -p /usr/lib/firefox-esr/defaults/pref /usr/lib/firefox-esr/distribution; \
+    cp /tmp/ff-cfg/mozilla.cfg /usr/lib/firefox-esr/ 2>/dev/null || true; \
+    cp /tmp/ff-cfg/defaults/pref/autoconfig.js /usr/lib/firefox-esr/defaults/pref/ 2>/dev/null || true; \
+    cp /tmp/ff-cfg/distribution/policies.json /usr/lib/firefox-esr/distribution/ 2>/dev/null || true; \
+    rm -rf /tmp/ff-cfg; \
+    # Disable extension signature verification (only works in ESR)
+    echo 'lockPref("xpinstall.signatures.required", false);' >> /usr/lib/firefox-esr/mozilla.cfg; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy our DRM-enabled server binary
 COPY --from=server-builder /bin/neko /usr/bin/neko
 
