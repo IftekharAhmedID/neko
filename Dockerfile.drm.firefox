@@ -80,11 +80,11 @@ RUN set -eux; \
     cp /usr/lib/firefox/distribution/policies.json /tmp/ff-cfg/distribution/ 2>/dev/null || true; \
     # Remove release Firefox (installed from tarball in base image, not apt)
     rm -rf /usr/lib/firefox /usr/bin/firefox; \
-    # Install Firefox ESR from Bookworm (ESR 115+)
-    echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm-esr.list; \
+    # Install Firefox ESR from Bullseye repos (same distro as base image — no dependency conflicts)
+    # Bullseye continuously backports ESR security updates (currently ESR 115.x)
+    # ESR allows xpinstall.signatures.required=false to load unsigned extensions
     apt-get update; \
     apt-get install -y --no-install-recommends firefox-esr; \
-    rm /etc/apt/sources.list.d/bookworm-esr.list; \
     # Create symlinks so all /usr/lib/firefox/ paths still work
     ln -sf /usr/lib/firefox-esr /usr/lib/firefox; \
     ln -sf /usr/bin/firefox-esr /usr/bin/firefox; \
