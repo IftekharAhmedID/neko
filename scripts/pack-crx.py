@@ -68,6 +68,7 @@ def main():
 
     # 6. Write CRX2 file
     #    Format: magic(4) + version(4) + pubkey_len(4) + sig_len(4) + pubkey + sig + zip
+    os.makedirs(os.path.dirname(out_crx), exist_ok=True)
     with open(out_crx, 'wb') as f:
         f.write(b'Cr24')                                # Magic number
         f.write(struct.pack('<I', 2))                    # CRX version 2
