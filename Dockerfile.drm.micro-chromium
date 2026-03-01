@@ -34,10 +34,15 @@ RUN go mod download && CGO_ENABLED=1 go build -o /bin/neko ./cmd/neko
 FROM ${BASE_IMAGE}
 COPY --from=server-builder /bin/neko /usr/bin/neko
 
-# Install minimal deps for DRM plugin (OpenSSL 3 from bookworm)
+# Install OpenSSL 3, GStreamer plugins (openh264enc is in plugins-bad), and deps
 RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libssl3 libstdc++6 && \
+    apt-get install -y --no-install-recommends \
+        libssl3 libstdc++6 \
+        libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+        gstreamer1.0-x gstreamer1.0-pulseaudio && \
     rm /etc/apt/sources.list.d/bookworm.list && \
     apt-get update && ldconfig && \
     rm -rf /var/lib/apt/lists/*
