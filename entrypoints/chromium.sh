@@ -37,7 +37,7 @@ CHROMIUM_BIN=$(which chromium 2>/dev/null || which chromium-browser 2>/dev/null 
 cat > /etc/neko/supervisord/chromium.conf << CREOF
 [program:chromium]
 environment=HOME="/home/%(ENV_USER)s",USER="%(ENV_USER)s",DISPLAY="%(ENV_DISPLAY)s"
-command=${CHROMIUM_BIN} --window-position=0,0 --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --start-maximized --no-default-browser-check --force-dark-mode --disable-file-system --disable-gpu --disable-software-rasterizer --disable-dev-shm-usage --use-fake-ui-for-media-stream --enable-features=WebRTCPipeWireCapturer --load-extension=/opt/translucid/extension ${TARGET_URL}
+command=${CHROMIUM_BIN} --window-position=0,0 --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --start-maximized --no-default-browser-check --force-dark-mode --disable-file-system --disable-dev-shm-usage --use-fake-ui-for-media-stream --enable-features=WebRTCPipeWireCapturer ${TARGET_URL}
 stopsignal=INT
 autorestart=true
 priority=800

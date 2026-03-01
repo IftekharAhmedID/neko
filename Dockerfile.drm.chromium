@@ -102,23 +102,29 @@ RUN ldconfig && \
 COPY --chown=neko chromium-webcam-preferences.json /home/neko/.config/chromium/Default/Preferences
 
 # ============================================================================
-# Translucid VM Activity Extension
-# Tracks user activity inside the VM browser for session monitoring
-# Chromium loads via --load-extension=/opt/translucid/extension (set at runtime)
+# Translucid VM Activity Extension — Packed as .crx (like Firefox uses .xpi)
+#
+# The extension is packed into a signed .crx file at build time using pack-crx.py.
+# Chromium installs it automatically via ExtensionInstallForcelist enterprise policy.
+# This avoids the --load-extension flag which Chromium blocks for unpacked extensions.
 # ============================================================================
-COPY translucid-extension/manifest.json /opt/translucid/extension/manifest.json
-COPY translucid-extension/background.js /opt/translucid/extension/background.js
-COPY translucid-extension/content.js /opt/translucid/extension/content.js
-COPY translucid-extension/icons/ /opt/translucid/extension/icons/
+COPY translucid-extension/ /tmp/extension-src/
+COPY scripts/pack-crx.py /tmp/pack-crx.py
+RUN apt-get update && apt-get install -y --no-install-recommends zip python3 && \
+    python3 /tmp/pack-crx.py /tmp/extension-src /opt/translucid/extension.crx && \
+    rm -rf /tmp/extension-src /tmp/pack-crx.py && \
+    apt-get purge -y zip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 RUN chown -R neko:neko /opt/translucid
 
 # ============================================================================
 # Pre-baked Chromium Enterprise Policies
-# Auto-grant camera/mic, allow extensions (including unpacked via --load-extension),
-# disable downloads, sync, etc.
+# - Force-install the .crx extension via ExtensionInstallForcelist
+# - Auto-grant camera/mic permissions
+# - Disable downloads, sync, autofill, etc.
 # ============================================================================
 RUN mkdir -p /etc/chromium/policies/managed && \
-    echo '{"AutofillAddressEnabled":false,"AutofillCreditCardEnabled":false,"BrowserSignin":0,"DefaultNotificationsSetting":2,"FullscreenAllowed":true,"SyncDisabled":true,"AutoplayAllowed":true,"DownloadRestrictions":3,"AllowFileSelectionDialogs":false,"PromptForDownloadLocation":false,"PasswordManagerEnabled":false,"AudioCaptureAllowed":true,"VideoCaptureAllowed":true,"AudioCaptureAllowedUrls":["https://*","http://*"],"VideoCaptureAllowedUrls":["https://*","http://*"],"DeveloperToolsAvailability":1,"ExtensionInstallAllowlist":["*"],"BlockExternalExtensions":false}' > /etc/chromium/policies/managed/translucid.json
+    EXT_ID=$(cat /opt/translucid/extension.id) && \
+    echo "{\"AutofillAddressEnabled\":false,\"AutofillCreditCardEnabled\":false,\"BrowserSignin\":0,\"DefaultNotificationsSetting\":2,\"FullscreenAllowed\":true,\"SyncDisabled\":true,\"AutoplayAllowed\":true,\"DownloadRestrictions\":3,\"AllowFileSelectionDialogs\":false,\"PromptForDownloadLocation\":false,\"PasswordManagerEnabled\":false,\"AudioCaptureAllowed\":true,\"VideoCaptureAllowed\":true,\"AudioCaptureAllowedUrls\":[\"https://*\",\"http://*\"],\"VideoCaptureAllowedUrls\":[\"https://*\",\"http://*\"],\"ExtensionInstallForcelist\":[\"${EXT_ID};file:///opt/translucid/extension-updates.xml\"]}" > /etc/chromium/policies/managed/translucid.json
 
 # ============================================================================
 # Translucid Chromium Entrypoint
