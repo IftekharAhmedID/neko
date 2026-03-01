@@ -58,7 +58,7 @@ CHROMIUM_BIN=$(which chromium 2>/dev/null || echo "/usr/bin/chromium")
 cat > /etc/neko/supervisord/chromium.conf << CREOF
 [program:chromium]
 environment=HOME="/home/%(ENV_USER)s",USER="%(ENV_USER)s",DISPLAY="%(ENV_DISPLAY)s"
-command=${CHROMIUM_BIN} --kiosk --window-position=0,0 --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --disable-infobars --disable-session-crashed-bubble --disable-dev-shm-usage --disable-pinch --overscroll-history-navigation=0 --disable-translate --disable-features=TranslateUI --ash-no-nudges --disable-background-networking --disable-client-side-phishing-detection --disable-default-apps --disable-hang-monitor --disable-popup-blocking --disable-prompt-on-repost --disable-sync --metrics-recording-only --no-default-browser-check --load-extension=/opt/translucid/extension ${TARGET_URL}
+command=${CHROMIUM_BIN} --app=${TARGET_URL} --window-position=0,0 --window-size=1280,800 --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --disable-infobars --disable-session-crashed-bubble --disable-dev-shm-usage --disable-pinch --overscroll-history-navigation=0 --disable-translate --disable-features=TranslateUI --disable-background-networking --disable-client-side-phishing-detection --disable-default-apps --disable-hang-monitor --disable-popup-blocking --disable-prompt-on-repost --disable-sync --metrics-recording-only --no-default-browser-check --load-extension=/opt/translucid/extension
 stopsignal=INT
 autorestart=true
 priority=800
@@ -69,7 +69,7 @@ redirect_stderr=true
 
 [program:openbox]
 environment=HOME="/home/%(ENV_USER)s",USER="%(ENV_USER)s",DISPLAY="%(ENV_DISPLAY)s"
-command=/usr/bin/openbox --config-file /etc/neko/openbox.xml
+command=/usr/bin/openbox --config-file /opt/translucid/kiosk-openbox.xml
 autorestart=true
 priority=300
 user=%(ENV_USER)s

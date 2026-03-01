@@ -58,6 +58,9 @@ RUN rm -rf /etc/chromium/policies /etc/chromium-browser/policies /etc/opt/chrome
     mkdir -p /etc/chromium/policies/managed && \
     echo '{"ExtensionInstallBlocklist":[],"ExtensionInstallAllowlist":["*"],"BlockExternalExtensions":false,"BrowserSignin":0,"SyncDisabled":true,"AutoplayAllowed":true,"DownloadRestrictions":3,"AudioCaptureAllowed":false,"VideoCaptureAllowed":false}' > /etc/chromium/policies/managed/translucid.json
 
+# Custom openbox config: no window decorations, fullscreen, no borders
+COPY kiosk-openbox.xml /opt/translucid/kiosk-openbox.xml
+
 # Micro-chromium entrypoint (kiosk mode, no browser UI)
 COPY entrypoints/micro-chromium.sh /opt/translucid/entrypoint.sh
 RUN chmod +x /opt/translucid/entrypoint.sh
