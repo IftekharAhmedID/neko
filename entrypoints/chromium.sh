@@ -82,14 +82,22 @@ EOF
 
 # =============================================================================
 # 3. Chromium Supervisord Config (with --load-extension since policies are now clean)
+#    TRANSLUCID_KIOSK=true  → kiosk mode (no browser UI, for embeds)
+#    TRANSLUCID_KIOSK=false → normal mode (full browser, for desktop sessions)
 # =============================================================================
 TARGET_URL="${TRANSLUCID_TARGET_URL:-about:blank}"
 CHROMIUM_BIN=$(which chromium 2>/dev/null || which chromium-browser 2>/dev/null || echo "/usr/bin/chromium")
 
+KIOSK_FLAGS=""
+if [ "${TRANSLUCID_KIOSK}" = "true" ]; then
+  KIOSK_FLAGS="--kiosk --disable-pinch --overscroll-history-navigation=0"
+  echo "[Translucid] Kiosk mode ENABLED (no browser UI)"
+fi
+
 cat > /etc/neko/supervisord/chromium.conf << CREOF
 [program:chromium]
 environment=HOME="/home/%(ENV_USER)s",USER="%(ENV_USER)s",DISPLAY="%(ENV_DISPLAY)s"
-command=${CHROMIUM_BIN} --window-position=0,0 --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --start-maximized --no-default-browser-check --force-dark-mode --disable-file-system --disable-dev-shm-usage --use-fake-ui-for-media-stream --enable-features=WebRTCPipeWireCapturer --load-extension=/opt/translucid/extension ${TARGET_URL}
+command=${CHROMIUM_BIN} --window-position=0,0 --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --start-maximized --no-default-browser-check --force-dark-mode --disable-file-system --disable-dev-shm-usage --use-fake-ui-for-media-stream --enable-features=WebRTCPipeWireCapturer --load-extension=/opt/translucid/extension ${KIOSK_FLAGS} ${TARGET_URL}
 stopsignal=INT
 autorestart=true
 priority=800
