@@ -13,11 +13,25 @@ echo "[Translucid] Session: ${TRANSLUCID_SESSION_ID:-unset}"
 
 mkdir -p /opt/translucid /var/log/neko /etc/neko/supervisord /etc/chromium/policies/managed
 
-# 1. Extension Config Server
+# 1. Install .crx extension via Chromium external extensions mechanism
+#    This is the reliable way to pre-install local .crx files (used by all Linux distros).
+#    Chromium reads JSON files from /usr/share/chromium/extensions/ on startup.
+if [ -f /opt/translucid/extension.crx ] && [ -f /opt/translucid/extension.id ]; then
+  EXT_ID=$(cat /opt/translucid/extension.id)
+  mkdir -p /usr/share/chromium/extensions
+  echo "{\"external_crx\":\"/opt/translucid/extension.crx\",\"external_version\":\"1.0.0\"}" > "/usr/share/chromium/extensions/${EXT_ID}.json"
+  echo "[Translucid] Extension .crx installed via external extensions: ID=${EXT_ID}"
+else
+  echo "[Translucid] WARNING: No .crx found at /opt/translucid/extension.crx — extension will not be installed"
+fi
+
+# 2. Extension Config Server
 if [ -n "$TRANSLUCID_SESSION_ID" ] && [ -n "$TRANSLUCID_BACKEND_URL" ]; then
   echo "{\"sessionId\":\"${TRANSLUCID_SESSION_ID}\",\"backendUrl\":\"${TRANSLUCID_BACKEND_URL}\"}" > /opt/translucid/config.json
+  echo "[Translucid] Config: sessionId=${TRANSLUCID_SESSION_ID}, backendUrl=${TRANSLUCID_BACKEND_URL}"
 else
   echo "{\"sessionId\":\"unknown\",\"backendUrl\":\"\"}" > /opt/translucid/config.json
+  echo "[Translucid] WARNING: Missing TRANSLUCID_SESSION_ID or TRANSLUCID_BACKEND_URL"
 fi
 
 cat > /etc/neko/supervisord/activity-config-server.conf << 'EOF'
