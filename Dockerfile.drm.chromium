@@ -121,11 +121,10 @@ RUN mkdir -p /etc/chromium/policies/managed && \
     echo '{"AutofillAddressEnabled":false,"AutofillCreditCardEnabled":false,"BrowserSignin":0,"DefaultNotificationsSetting":2,"FullscreenAllowed":true,"SyncDisabled":true,"AutoplayAllowed":true,"DownloadRestrictions":3,"AllowFileSelectionDialogs":false,"PromptForDownloadLocation":false,"PasswordManagerEnabled":false,"AudioCaptureAllowed":true,"VideoCaptureAllowed":true,"AudioCaptureAllowedUrls":["https://*","http://*"],"VideoCaptureAllowedUrls":["https://*","http://*"],"DeveloperToolsAvailability":1,"ExtensionInstallAllowlist":["*"],"BlockExternalExtensions":false}' > /etc/chromium/policies/managed/translucid.json
 
 # ============================================================================
-# Translucid Universal Entrypoint
+# Translucid Chromium Entrypoint
 # Reads env vars at startup, generates per-session configs, starts supervisord.
-# Works identically on ALL clouds: AWS ECS, Azure ACI, GCP Compute, bare metal.
 # ============================================================================
-COPY translucid-entrypoint.sh /opt/translucid/entrypoint.sh
+COPY entrypoints/chromium.sh /opt/translucid/entrypoint.sh
 RUN chmod +x /opt/translucid/entrypoint.sh
 
 # Environment variables for DRM (to be set at runtime — NEVER baked)

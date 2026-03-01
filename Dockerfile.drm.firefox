@@ -167,11 +167,10 @@ RUN mkdir -p /usr/lib/firefox/distribution && \
     echo '{"policies":{"BlockAboutConfig":true,"CaptivePortal":false,"DisableAppUpdate":true,"DisableTelemetry":true,"Permissions":{"Camera":{"Allow":["https://"],"BlockNewRequests":false},"Microphone":{"Allow":["https://"],"BlockNewRequests":false},"Notifications":{"BlockNewRequests":true}},"ExtensionSettings":{"vm-activity@translucid.cloud":{"installation_mode":"force_installed","install_url":"file:///usr/lib/firefox/distribution/extensions/vm-activity@translucid.cloud.xpi"}},"Preferences":{"media.navigator.permission.disabled":true,"xpinstall.signatures.required":false}}}' > /usr/lib/firefox/distribution/policies.json
 
 # ============================================================================
-# Translucid Universal Entrypoint
+# Translucid Firefox Entrypoint
 # Reads env vars at startup, generates per-session configs, starts supervisord.
-# Works identically on ALL clouds: AWS ECS, Azure ACI, GCP Compute, bare metal.
 # ============================================================================
-COPY translucid-entrypoint.sh /opt/translucid/entrypoint.sh
+COPY entrypoints/firefox.sh /opt/translucid/entrypoint.sh
 RUN chmod +x /opt/translucid/entrypoint.sh
 
 # Environment variables for DRM (to be set at runtime — NEVER baked)
