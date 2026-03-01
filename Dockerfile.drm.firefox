@@ -159,8 +159,22 @@ COPY translucid-extension/icons/ /opt/translucid/extension/icons/
 # Ensure extension directory is accessible
 RUN chown -R neko:neko /opt/translucid
 
-# Environment variables for DRM (to be set at runtime)
-# When NEKO_DRM_ENABLED=true, the cencryptor GStreamer element is added to pipeline
+# ============================================================================
+# Pre-baked Firefox Policies
+# Auto-grant camera/mic, install extension, disable telemetry
+# ============================================================================
+RUN mkdir -p /usr/lib/firefox/distribution && \
+    echo '{"policies":{"BlockAboutConfig":true,"CaptivePortal":false,"DisableAppUpdate":true,"DisableTelemetry":true,"Permissions":{"Camera":{"Allow":["https://"],"BlockNewRequests":false},"Microphone":{"Allow":["https://"],"BlockNewRequests":false},"Notifications":{"BlockNewRequests":true}},"ExtensionSettings":{"vm-activity@translucid.cloud":{"installation_mode":"force_installed","install_url":"file:///usr/lib/firefox/distribution/extensions/vm-activity@translucid.cloud.xpi"}},"Preferences":{"media.navigator.permission.disabled":true,"xpinstall.signatures.required":false}}}' > /usr/lib/firefox/distribution/policies.json
+
+# ============================================================================
+# Translucid Universal Entrypoint
+# Reads env vars at startup, generates per-session configs, starts supervisord.
+# Works identically on ALL clouds: AWS ECS, Azure ACI, GCP Compute, bare metal.
+# ============================================================================
+COPY translucid-entrypoint.sh /opt/translucid/entrypoint.sh
+RUN chmod +x /opt/translucid/entrypoint.sh
+
+# Environment variables for DRM (to be set at runtime — NEVER baked)
 ENV NEKO_DRM_ENABLED=false
 ENV NEKO_DRM_KEY_ID=""
 ENV NEKO_DRM_KEY=""
@@ -168,13 +182,20 @@ ENV NEKO_DRM_IV=""
 ENV NEKO_DRM_MODE="cbc"
 
 # Environment variables for Webcam/Mic capture from client
-# These enable the server to receive webcam/mic streams from browser clients
 ENV NEKO_CAPTURE_WEBCAM_ENABLED=false
 ENV NEKO_CAPTURE_WEBCAM_DEVICE="/dev/video0"
 ENV NEKO_CAPTURE_WEBCAM_WIDTH=1280
 ENV NEKO_CAPTURE_WEBCAM_HEIGHT=720
 ENV NEKO_CAPTURE_MICROPHONE_ENABLED=false
 ENV NEKO_CAPTURE_MICROPHONE_DEVICE="audio_input"
+
+# Translucid session env vars (set by provider at runtime)
+ENV TRANSLUCID_SESSION_ID=""
+ENV TRANSLUCID_BACKEND_URL=""
+ENV TRANSLUCID_TARGET_URL=""
+
+# Use entrypoint as CMD so providers can still override if needed
+CMD ["/opt/translucid/entrypoint.sh"]
 
 # Labels
 LABEL org.opencontainers.image.title="Neko Firefox with DRM"

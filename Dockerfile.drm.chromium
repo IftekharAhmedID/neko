@@ -112,7 +112,23 @@ COPY translucid-extension/content.js /opt/translucid/extension/content.js
 COPY translucid-extension/icons/ /opt/translucid/extension/icons/
 RUN chown -R neko:neko /opt/translucid
 
-# Environment variables for DRM (to be set at runtime)
+# ============================================================================
+# Pre-baked Chromium Enterprise Policies
+# Auto-grant camera/mic, allow extensions (including unpacked via --load-extension),
+# disable downloads, sync, etc.
+# ============================================================================
+RUN mkdir -p /etc/chromium/policies/managed && \
+    echo '{"AutofillAddressEnabled":false,"AutofillCreditCardEnabled":false,"BrowserSignin":0,"DefaultNotificationsSetting":2,"FullscreenAllowed":true,"SyncDisabled":true,"AutoplayAllowed":true,"DownloadRestrictions":3,"AllowFileSelectionDialogs":false,"PromptForDownloadLocation":false,"PasswordManagerEnabled":false,"AudioCaptureAllowed":true,"VideoCaptureAllowed":true,"AudioCaptureAllowedUrls":["https://*","http://*"],"VideoCaptureAllowedUrls":["https://*","http://*"],"DeveloperToolsAvailability":1,"ExtensionInstallAllowlist":["*"],"BlockExternalExtensions":false}' > /etc/chromium/policies/managed/translucid.json
+
+# ============================================================================
+# Translucid Universal Entrypoint
+# Reads env vars at startup, generates per-session configs, starts supervisord.
+# Works identically on ALL clouds: AWS ECS, Azure ACI, GCP Compute, bare metal.
+# ============================================================================
+COPY translucid-entrypoint.sh /opt/translucid/entrypoint.sh
+RUN chmod +x /opt/translucid/entrypoint.sh
+
+# Environment variables for DRM (to be set at runtime — NEVER baked)
 ENV NEKO_DRM_ENABLED=false
 ENV NEKO_DRM_KEY_ID=""
 ENV NEKO_DRM_KEY=""
@@ -120,13 +136,20 @@ ENV NEKO_DRM_IV=""
 ENV NEKO_DRM_MODE="cbc"
 
 # Environment variables for Webcam/Mic capture from client
-# These enable the server to receive webcam/mic streams from browser clients
 ENV NEKO_CAPTURE_WEBCAM_ENABLED=false
 ENV NEKO_CAPTURE_WEBCAM_DEVICE="/dev/video0"
 ENV NEKO_CAPTURE_WEBCAM_WIDTH=1280
 ENV NEKO_CAPTURE_WEBCAM_HEIGHT=720
 ENV NEKO_CAPTURE_MICROPHONE_ENABLED=false
 ENV NEKO_CAPTURE_MICROPHONE_DEVICE="audio_input"
+
+# Translucid session env vars (set by provider at runtime)
+ENV TRANSLUCID_SESSION_ID=""
+ENV TRANSLUCID_BACKEND_URL=""
+ENV TRANSLUCID_TARGET_URL=""
+
+# Use entrypoint as CMD so providers can still override if needed
+CMD ["/opt/translucid/entrypoint.sh"]
 
 # Labels
 LABEL org.opencontainers.image.title="Neko Chromium with DRM"
