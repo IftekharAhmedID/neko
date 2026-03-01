@@ -102,29 +102,42 @@ RUN ldconfig && \
 COPY --chown=neko chromium-webcam-preferences.json /home/neko/.config/chromium/Default/Preferences
 
 # ============================================================================
-# Translucid VM Activity Extension — Packed as .crx (like Firefox uses .xpi)
-#
-# The extension is packed into a signed .crx file at build time using pack-crx.py.
-# Chromium installs it automatically via ExtensionInstallForcelist enterprise policy.
-# This avoids the --load-extension flag which Chromium blocks for unpacked extensions.
+# Translucid VM Activity Extension
+# Strategy: TRIPLE redundancy for extension installation
+#   1. Unpacked files at /opt/translucid/extension/ for --load-extension
+#   2. Packed .crx for external extensions JSON mechanism
+#   3. ExtensionInstallForcelist policy as backup
 # ============================================================================
+
+# Keep unpacked extension files (for --load-extension)
+COPY translucid-extension/manifest.json /opt/translucid/extension/manifest.json
+COPY translucid-extension/background.js /opt/translucid/extension/background.js
+COPY translucid-extension/content.js /opt/translucid/extension/content.js
+COPY translucid-extension/icons/ /opt/translucid/extension/icons/
+
+# Pack .crx (for external extensions JSON + ExtensionInstallForcelist)
 COPY translucid-extension/ /tmp/extension-src/
 COPY scripts/pack-crx.py /tmp/pack-crx.py
 RUN apt-get update && apt-get install -y --no-install-recommends zip python3 && \
     python3 /tmp/pack-crx.py /tmp/extension-src /opt/translucid/extension.crx && \
     rm -rf /tmp/extension-src /tmp/pack-crx.py && \
     apt-get purge -y zip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 RUN chown -R neko:neko /opt/translucid
 
 # ============================================================================
-# Pre-baked Chromium Enterprise Policies
-# - Force-install the .crx extension via ExtensionInstallForcelist
-# - Auto-grant camera/mic permissions
-# - Disable downloads, sync, autofill, etc.
+# NUKE all Chromium policies from the Neko base image
+# The base image ships restrictive policies that block ALL extensions.
+# We must completely remove them before writing our own permissive policy.
 # ============================================================================
-RUN mkdir -p /etc/chromium/policies/managed && \
+RUN rm -rf /etc/chromium/policies /etc/chromium-browser/policies /etc/opt/chrome/policies && \
+    mkdir -p /etc/chromium/policies/managed /etc/chromium/policies/recommended && \
     EXT_ID=$(cat /opt/translucid/extension.id) && \
-    echo "{\"AutofillAddressEnabled\":false,\"AutofillCreditCardEnabled\":false,\"BrowserSignin\":0,\"DefaultNotificationsSetting\":2,\"FullscreenAllowed\":true,\"SyncDisabled\":true,\"AutoplayAllowed\":true,\"DownloadRestrictions\":3,\"AllowFileSelectionDialogs\":false,\"PromptForDownloadLocation\":false,\"PasswordManagerEnabled\":false,\"AudioCaptureAllowed\":true,\"VideoCaptureAllowed\":true,\"AudioCaptureAllowedUrls\":[\"https://*\",\"http://*\"],\"VideoCaptureAllowedUrls\":[\"https://*\",\"http://*\"],\"ExtensionInstallForcelist\":[\"${EXT_ID};file:///opt/translucid/extension-updates.xml\"]}" > /etc/chromium/policies/managed/translucid.json
+    echo "{\"ExtensionInstallBlocklist\":[],\"ExtensionInstallAllowlist\":[\"*\"],\"BlockExternalExtensions\":false,\"AutofillAddressEnabled\":false,\"AutofillCreditCardEnabled\":false,\"BrowserSignin\":0,\"DefaultNotificationsSetting\":2,\"FullscreenAllowed\":true,\"SyncDisabled\":true,\"AutoplayAllowed\":true,\"DownloadRestrictions\":3,\"AllowFileSelectionDialogs\":false,\"PromptForDownloadLocation\":false,\"PasswordManagerEnabled\":false,\"AudioCaptureAllowed\":true,\"VideoCaptureAllowed\":true,\"AudioCaptureAllowedUrls\":[\"https://*\",\"http://*\"],\"VideoCaptureAllowedUrls\":[\"https://*\",\"http://*\"],\"ExtensionInstallForcelist\":[\"${EXT_ID};file:///opt/translucid/extension-updates.xml\"]}" > /etc/chromium/policies/managed/translucid.json && \
+    mkdir -p /usr/share/chromium/extensions && \
+    echo "{\"external_crx\":\"/opt/translucid/extension.crx\",\"external_version\":\"1.0.0\"}" > "/usr/share/chromium/extensions/${EXT_ID}.json" && \
+    echo "[Dockerfile] Extension ID: ${EXT_ID}" && \
+    echo "[Dockerfile] Policies nuked and rebuilt. Extension installed via: policy + external JSON + unpacked files"
 
 # ============================================================================
 # Translucid Chromium Entrypoint
