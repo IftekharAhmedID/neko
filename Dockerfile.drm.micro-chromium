@@ -1,0 +1,77 @@
+# Neko Micro-Chromium — Ultra-lightweight DRM-protected content embedding
+# Build: docker build -f Dockerfile.drm.micro-chromium -t translucid/neko-drm-micro-chromium .
+#
+# Key Features:
+# - Chromium in kiosk mode (no browser UI, no tabs, no URL bar)
+# - DRM encryption via CastLabs cencryptor
+# - No mic/webcam (lightweight)
+# - Fast boot, optimized for small instances
+# - Extension for enhanced activity monitoring (clicks, inputs)
+
+ARG BASE_IMAGE=ghcr.io/m1k1o/neko/chromium:latest
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Stage 1: Build the Go server with DRM modifications
+FROM golang:1.21-bullseye AS server-builder
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY server/ ./
+RUN go mod download
+ARG TARGETPLATFORM
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/neko -ldflags="-s -w" ./cmd/neko
+
+# Stage 2: Final image
+FROM ${BASE_IMAGE}
+
+# Copy our DRM-enabled server binary
+COPY --from=server-builder /bin/neko /usr/bin/neko
+
+# Install minimal deps for DRM plugin
+RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libssl3 libstdc++6 && \
+    rm /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update && ldconfig && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy CastLabs GStreamer encryption plugin
+COPY castlabs-sdk/libgstcencryptor.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+RUN ldconfig && rm -rf /root/.cache/gstreamer-1.0 /home/*/.cache/gstreamer-1.0 2>/dev/null || true
+
+# Extension files (unpacked for --load-extension)
+COPY translucid-extension/manifest.json /opt/translucid/extension/manifest.json
+COPY translucid-extension/background.js /opt/translucid/extension/background.js
+COPY translucid-extension/content.js /opt/translucid/extension/content.js
+COPY translucid-extension/icons/ /opt/translucid/extension/icons/
+RUN chown -R neko:neko /opt/translucid
+
+# NUKE base image policies and write permissive ones
+RUN rm -rf /etc/chromium/policies /etc/chromium-browser/policies /etc/opt/chrome/policies && \
+    mkdir -p /etc/chromium/policies/managed && \
+    echo '{"ExtensionInstallBlocklist":[],"ExtensionInstallAllowlist":["*"],"BlockExternalExtensions":false,"BrowserSignin":0,"SyncDisabled":true,"AutoplayAllowed":true,"DownloadRestrictions":3,"AudioCaptureAllowed":false,"VideoCaptureAllowed":false}' > /etc/chromium/policies/managed/translucid.json
+
+# Micro-chromium entrypoint (kiosk mode, no browser UI)
+COPY entrypoints/micro-chromium.sh /opt/translucid/entrypoint.sh
+RUN chmod +x /opt/translucid/entrypoint.sh
+
+# DRM env vars (runtime only)
+ENV NEKO_DRM_ENABLED=false
+ENV NEKO_DRM_KEY_ID=""
+ENV NEKO_DRM_KEY=""
+ENV NEKO_DRM_IV=""
+ENV NEKO_DRM_MODE="cbc"
+
+# No mic/webcam for micro image
+ENV NEKO_CAPTURE_WEBCAM_ENABLED=false
+ENV NEKO_CAPTURE_MICROPHONE_ENABLED=false
+
+# Session env vars
+ENV TRANSLUCID_SESSION_ID=""
+ENV TRANSLUCID_BACKEND_URL=""
+ENV TRANSLUCID_TARGET_URL=""
+
+CMD ["/opt/translucid/entrypoint.sh"]
+
+LABEL org.opencontainers.image.title="Neko Micro-Chromium with DRM"
+LABEL org.opencontainers.image.description="Ultra-lightweight Chromium kiosk for DRM-protected content embedding"
