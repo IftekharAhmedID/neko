@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { readFile } from 'fs/promises';
+import { mkdir, readFile, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { spawn } from 'child_process';
 
@@ -10,6 +10,8 @@ const HEALTH_MS = Number(process.env.CDP_OBSERVER_HEALTH_MS || 60000);
 const PAGE_SUMMARY_MS = Number(process.env.CDP_OBSERVER_PAGE_SUMMARY_MS || 15000);
 const CONTENT_CHANGE_MS = Number(process.env.CDP_OBSERVER_CONTENT_CHANGE_MS || 10000);
 const MAX_EVENTS_PER_FLUSH = Number(process.env.CDP_OBSERVER_MAX_EVENTS || 10);
+const CDP_PORT_FILE = process.env.CDP_PORT_FILE || '/home/neko/.config/chromium/DevToolsActivePort';
+const CDP_HTTP_URL = process.env.CDP_HTTP_URL || 'http://127.0.0.1:9222';
 
 const stateByTab = new Map();
 let lastHealthAt = 0;
@@ -47,6 +49,7 @@ function cdpEnv() {
     HOME: process.env.HOME || '/home/neko',
     USER: process.env.USER || 'neko',
     CDP_HOST: process.env.CDP_HOST || '127.0.0.1',
+    CDP_PORT_FILE,
   };
   const candidates = [
     '/home/neko/.config/chromium/DevToolsActivePort',
@@ -55,6 +58,19 @@ function cdpEnv() {
   const found = candidates.find((path) => existsSync(path));
   if (found && !env.CDP_PORT_FILE) env.CDP_PORT_FILE = found;
   return env;
+}
+
+async function ensureCdpPortFile() {
+  const response = await fetch(`${CDP_HTTP_URL}/json/version`);
+  if (!response.ok) throw new Error(`CDP version endpoint ${response.status}`);
+  const data = await response.json();
+  const wsUrl = data.webSocketDebuggerUrl;
+  if (!wsUrl) throw new Error('CDP version endpoint missing webSocketDebuggerUrl');
+  const parsedUrl = new URL(wsUrl);
+  const path = parsedUrl.pathname;
+  const port = parsedUrl.port || new URL(CDP_HTTP_URL).port || '9222';
+  await mkdir('/home/neko/.config/chromium', { recursive: true });
+  await writeFile(CDP_PORT_FILE, `${port}\n${path}\n`);
 }
 
 function runCdp(args, timeoutMs = 12000) {
@@ -166,6 +182,7 @@ async function postEvents(events) {
 
 async function observeOnce() {
   const events = [];
+  await ensureCdpPortFile();
   const listOutput = await runCdp(['list'], 10000);
   const pages = parseList(listOutput).slice(0, 8);
   const importantPages = pages.filter((page, index) => index === 0 || !page.url.startsWith('about:')).slice(0, 3);
