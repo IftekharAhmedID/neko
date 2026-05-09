@@ -26,6 +26,10 @@ const BATCH_INTERVAL_MS = 5000;
 const MAX_QUEUE_SIZE = 500;
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_BACKOFF_MS = 2000;
+const EVENT_DEDUPE_MS = 3500;
+const SEARCH_NAV_SUPPRESS_MS = 8000;
+const PAGE_LOAD_SUPPRESS_MS = 2500;
+const TAB_SWITCH_DEDUPE_MS = 5000;
 
 let config = {
   sessionId: null,
@@ -40,9 +44,85 @@ let config = {
 const eventQueue = [];
 let batchTimer = null;
 let retryCount = 0;
+const recentEventSignatures = new Map();
+const recentSearchUrls = new Map();
+const recentNavigations = new Map();
+
+function eventSignature(event) {
+  const details = event.details || {};
+  const url = details.url || '';
+  const text = details.query || details.textPreview || details.text || '';
+  return `${event.type}:${event.category || ''}:${event.message || ''}:${url}:${text}`;
+}
+
+function pruneRecent(map, maxAgeMs) {
+  const now = Date.now();
+  for (const [key, seenAt] of map.entries()) {
+    if (now - seenAt > maxAgeMs) map.delete(key);
+  }
+}
+
+function urlWithoutHash(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return String(url || '');
+  }
+}
+
+function isSearchUrl(url) {
+  return Boolean(extractSearchQuery(url));
+}
+
+function shouldSuppressEvent(event) {
+  const now = Date.now();
+  const details = event.details || {};
+  const url = urlWithoutHash(details.url || '');
+  pruneRecent(recentEventSignatures, EVENT_DEDUPE_MS * 4);
+  pruneRecent(recentSearchUrls, SEARCH_NAV_SUPPRESS_MS * 2);
+  pruneRecent(recentNavigations, TAB_SWITCH_DEDUPE_MS * 2);
+
+  if (event.type === 'search_query') {
+    const searchKey = `${details.engine || ''}:${String(details.query || '').toLowerCase()}`;
+    const existing = recentEventSignatures.get(`search:${searchKey}`) || 0;
+    recentEventSignatures.set(`search:${searchKey}`, now);
+    if (url) recentSearchUrls.set(url, now);
+    return now - existing < SEARCH_NAV_SUPPRESS_MS;
+  }
+
+  if ((event.type === 'navigation' || event.type === 'page_loaded' || event.type === 'form_submitted') && url && isSearchUrl(url)) {
+    const lastSearchAt = recentSearchUrls.get(url) || 0;
+    if (now - lastSearchAt < SEARCH_NAV_SUPPRESS_MS) return true;
+  }
+
+  if (event.type === 'page_loaded' && url) {
+    const lastNavAt = recentNavigations.get(url) || 0;
+    if (now - lastNavAt < PAGE_LOAD_SUPPRESS_MS) return true;
+  }
+
+  if (event.type === 'navigation' && url) {
+    const previous = recentNavigations.get(url) || 0;
+    recentNavigations.set(url, now);
+    if (now - previous < EVENT_DEDUPE_MS) return true;
+  }
+
+  if (event.type === 'tab_switched' && url) {
+    const previous = recentNavigations.get(`tab:${url}`) || 0;
+    recentNavigations.set(`tab:${url}`, now);
+    if (now - previous < TAB_SWITCH_DEDUPE_MS) return true;
+  }
+
+  const signature = eventSignature(event);
+  const previous = recentEventSignatures.get(signature) || 0;
+  recentEventSignatures.set(signature, now);
+  return now - previous < EVENT_DEDUPE_MS;
+}
 
 function queueEvent(event) {
   if (!config.enabled || !config.sessionId) return;
+  if (shouldSuppressEvent(event)) return;
 
   eventQueue.push({
     ...event,
@@ -199,6 +279,17 @@ function extractSearchQuery(url) {
   return null;
 }
 
+function readableSearchEngine(engine) {
+  const normalized = String(engine || '').replace(/^www\./, '');
+  if (normalized === 'google.com') return 'Google';
+  if (normalized === 'bing.com') return 'Bing';
+  if (normalized === 'duckduckgo.com') return 'DuckDuckGo';
+  if (normalized === 'search.yahoo.com') return 'Yahoo';
+  if (normalized === 'ecosia.org') return 'Ecosia';
+  if (normalized === 'startpage.com') return 'Startpage';
+  return normalized || 'search';
+}
+
 // ============================================================================
 // DOMAIN EXTRACTION — Clean domain from URL for readable logging
 // ============================================================================
@@ -278,7 +369,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       queueEvent({
         type: 'search_query',
         category: 'search',
-        message: `Searched on ${search.engine}: "${search.query}"`,
+        message: `Searched ${readableSearchEngine(search.engine)} for "${search.query}"`,
         details: {
           tabId,
           engine: search.engine,
@@ -463,21 +554,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  const senderDetails = {
+    tabId: sender.tab?.id,
+    url: sender.tab?.url || '',
+    domain: getDomain(sender.tab?.url || ''),
+    pageTitle: sender.tab?.title || '',
+    frameUrl: message.pageUrl || '',
+    frameTitle: message.pageTitle || '',
+    frame: message.frame || '',
+    app: message.app || message.details?.app || '',
+  };
+
   switch (message.type) {
     case 'text_input':
       queueEvent({
         type: 'text_input',
         category: 'input',
-        message: `User typed: "${truncate(message.text, 200)}"`,
+        message: message.message || `User typed: "${truncate(message.text, 200)}"`,
         details: {
-          tabId: sender.tab?.id,
-          url: sender.tab?.url || '',
-          domain: getDomain(sender.tab?.url || ''),
-          pageTitle: sender.tab?.title || '',
+          ...senderDetails,
           fieldType: message.fieldType || 'text',
           fieldName: message.fieldName || '',
-          text: message.text,
+          text: truncate(message.text || '', 1200),
           textLength: message.text?.length || 0,
+          lineCount: message.lineCount || 0,
+          reason: message.reason || '',
+          ...(message.details || {}),
         },
       });
       break;
@@ -486,13 +588,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       queueEvent({
         type: 'clipboard_copy',
         category: 'input',
-        message: `User copied text (${message.textLength} chars)`,
+        message: message.message || `User copied text (${message.textLength} chars)`,
         details: {
-          tabId: sender.tab?.id,
-          url: sender.tab?.url || '',
-          domain: getDomain(sender.tab?.url || ''),
+          ...senderDetails,
           textLength: message.textLength || 0,
           textPreview: truncate(message.text || '', 100),
+          ...(message.details || {}),
+        },
+      });
+      break;
+
+    case 'clipboard_cut':
+      queueEvent({
+        type: 'clipboard_cut',
+        category: 'input',
+        message: message.message || `User cut text (${message.textLength} chars)`,
+        details: {
+          ...senderDetails,
+          textLength: message.textLength || 0,
+          textPreview: truncate(message.text || '', 100),
+          ...(message.details || {}),
         },
       });
       break;
@@ -501,13 +616,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       queueEvent({
         type: 'clipboard_paste',
         category: 'input',
-        message: `User pasted text (${message.textLength} chars)`,
+        message: message.message || `User pasted text (${message.textLength} chars)`,
         details: {
-          tabId: sender.tab?.id,
-          url: sender.tab?.url || '',
-          domain: getDomain(sender.tab?.url || ''),
+          ...senderDetails,
           textLength: message.textLength || 0,
           textPreview: truncate(message.text || '', 100),
+          ...(message.details || {}),
         },
       });
       break;
@@ -518,12 +632,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         category: 'interaction',
         message: message.message || 'Page interaction',
         details: {
-          tabId: sender.tab?.id,
-          url: sender.tab?.url || '',
-          domain: getDomain(sender.tab?.url || ''),
+          ...senderDetails,
           ...message.details,
         },
       });
+      break;
+
+    default:
+      if (message.category || message.message || message.details) {
+        queueEvent({
+          type: message.type,
+          category: message.category || 'interaction',
+          message: message.message || message.type,
+          details: {
+            ...senderDetails,
+            ...(message.details || {}),
+          },
+        });
+      }
       break;
   }
 

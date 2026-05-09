@@ -9,9 +9,7 @@ RUN if command -v node >/dev/null 2>&1 && node --version | grep -Eq '^v2[2-9]\.'
       rm -rf /var/lib/apt/lists/*; \
     fi
 
-COPY chrome-cdp-skill/ /opt/translucid/chrome-cdp-skill/
-COPY translucid-cdp-observer/ /opt/translucid/cdp-observer/
+COPY translucid-browser-use-cdp-bridge/ /opt/translucid/browser-use-cdp-bridge/
+COPY translucid-extension/ /opt/translucid/extension/
 
-RUN chmod +x /opt/translucid/chrome-cdp-skill/skills/chrome-cdp/scripts/cdp.mjs && \
-    chown -R neko:neko /opt/translucid/chrome-cdp-skill /opt/translucid/cdp-observer && \
-    printf '[program:translucid-cdp-observer]\ncommand=node /opt/translucid/cdp-observer/observer.mjs\nautostart=true\nautorestart=true\npriority=250\nstdout_logfile=/var/log/neko/cdp-observer.log\nstdout_logfile_maxbytes=20MB\nredirect_stderr=true\n' > /etc/neko/supervisord/translucid-cdp-observer.conf
+RUN chown -R neko:neko /opt/translucid/browser-use-cdp-bridge /opt/translucid/extension
